@@ -14,7 +14,8 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "build-wasm": "wasm-pack build ./wasm-audio --target web && rm -rf ./public/wasm-audio && cp -R ./wasm-audio/pkg ./public/wasm-audio"
   },
   "eslintConfig": {
     "extends": "react-app"
