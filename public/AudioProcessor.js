@@ -1,3 +1,4 @@
+import "./TextEncoder.js";
 import init, { WasmPitchDetector } from "./wasm-audio/wasm_audio.js";
 
 class AudioProcessor extends AudioWorkletProcessor {
@@ -12,14 +13,13 @@ class AudioProcessor extends AudioWorkletProcessor {
   }
 
   onmessage = (eventData) => {
-    switch (eventData.type) {
-      case "send-wasm-module": {
-        init(WebAssembly.compile(eventData.wasmBytes)).then(() => {
-          console.log("Wasm compiled successfully.");
-          this.detector = new WasmPitchDetector(eventData.sampleRate);
-        });
-        break;
-      }
+    if (eventData.type === "send-wasm-module") {
+      // AudioNode has sent us a message containing the Wasm library to load into
+      // our context as well as information about the audio device used for
+      // recording.
+      init(WebAssembly.compile(eventData.wasmBytes)).then(() => {
+        this.detector = WasmPitchDetector.new(eventData.sampleRate);
+      });
     }
   };
 
@@ -27,70 +27,24 @@ class AudioProcessor extends AudioWorkletProcessor {
     const BUFFER_LENGTH = 1024;
 
     // By default, the node has single input and output.
-    const input = inputs[0];
+    const inputChannels = inputs[0];
+    const inputSamples = inputChannels[0];
+    if (!inputSamples) return;
 
-    this.samples = [...this.samples, ...input[0]];
+    this.samples = [...this.samples, ...inputSamples];
     this.samples = this.samples.slice(
       Math.max(0, this.samples.length - BUFFER_LENGTH)
     );
-    // const numInputChannels = input.length;
-    // if (numInputChannels < 1) {
-    //   return false;
-    // }
 
-    // const updatesPerSecond = sampleRate / 128;
-    // const desiredUpdatesPerSecond = updatesPerSecond;
-    // const iterationsPerUpdate = Math.ceil(
-    //   updatesPerSecond / desiredUpdatesPerSecond
-    // );
+    if (this.samples.length >= 1024 && this.detector) {
+      const result = this.detector.detect_pitch(this.samples);
 
-    const inputSamples = input[0];
-
-    if (this.samples.length >= 1024) {
-      const result = detect_pitch(this.samples, 48000);
-
-      this.port.postMessage(result);
+      if (result !== 0) {
+        this.port.postMessage({ type: "pitch", pitch: result });
+      }
     }
-    // this.wasmSamplesProcessor.add_samples_chunk(inputSamples);
 
-    console.log(this.samples.length);
     return true;
-
-    //     if (
-    //       this.pitchDetector &&
-    //       ++this.iteration % iterationsPerUpdate === 0 &&
-    //       this.wasmSamplesProcessor.has_sufficient_samples(this.pitchDetector)
-    //     ) {
-    //       try {
-    //         this.wasmSamplesProcessor.set_latest_samples_on(this.pitchDetector);
-
-    //         const result = this.pitchDetector.pitches();
-
-    //         if (result.code !== "success") {
-    //           console.log("error getting pitches");
-    //         } else {
-    //           const pitches = result.pitches;
-    //           if (pitches.length > 0) {
-    //             this.port.postMessage({
-    //               type: "pitches",
-    //               result: pitches.map((p) => ({
-    //                 frequency: p.frequency,
-    //                 clarity: p.clarity,
-    //                 t: p.t,
-    //                 onset: p.onset,
-    //               })),
-    //             });
-
-    //             pitches.forEach((p) => p.free());
-    //           }
-    //         }
-    //       } catch (e) {
-    //         console.error(e);
-    //       }
-    //     }
-
-    //     return true;
-    //   }
   }
 }
 

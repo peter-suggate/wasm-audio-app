@@ -2,10 +2,14 @@ import React from "react";
 import "./App.css";
 import { setupAudio } from "./setupAudio";
 
-function PitchReadout({ audio, running }) {
+function PitchReadout({ running, latestPitch }) {
   return (
     <div className="PitchReadout">
-      {audio.node.latestPitch || (running ? "Make a sound" : "")}
+      {latestPitch
+        ? `Latest pitch: ${latestPitch.toFixed(1)} Hz`
+        : running
+        ? "Listening..."
+        : "Paused"}
     </div>
   );
 }
@@ -13,14 +17,15 @@ function PitchReadout({ audio, running }) {
 function AudioPlayerControl() {
   const [audio, setAudio] = React.useState();
   const [running, setRunning] = React.useState(false);
+  const [latestPitch, setLatestPitch] = React.useState(undefined);
 
-  // Initial state. Initialize web audio once a user gesture on the page
+  // Initial state. Initialize the web audio once a user gesture on the page
   // has been registered.
   if (!audio) {
     return (
       <button
         onClick={async () => {
-          setAudio(await setupAudio());
+          setAudio(await setupAudio(setLatestPitch));
           setRunning(true);
         }}
       >
@@ -33,7 +38,7 @@ function AudioPlayerControl() {
   const { context } = audio;
   return (
     <div>
-      <PitchReadout audio={audio} running={running} />
+      <PitchReadout running={running} latestPitch={latestPitch} />
       <button
         onClick={async () => {
           if (running) {

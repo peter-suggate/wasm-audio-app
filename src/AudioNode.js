@@ -6,7 +6,9 @@ export default class AudioNode extends AudioWorkletNode {
    * @param {ArrayBuffer} wasmBytes Sequence of bytes representing the entire
    * WASM module that will handle pitch detection.
    */
-  init(wasmBytes) {
+  init(wasmBytes, onPitchDetectedCallback) {
+    this.onPitchDetectedCallback = onPitchDetectedCallback;
+
     // Listen to messages sent from the audio processor.
     this.port.onmessage = (event) => this.onmessage(event.data);
 
@@ -23,7 +25,9 @@ export default class AudioNode extends AudioWorkletNode {
     };
   }
 
-  onmessage(pitch) {
-    console.log("pitch", pitch);
+  onmessage(event) {
+    if (event.type === "pitch") {
+      this.onPitchDetectedCallback(event.pitch);
+    }
   }
 }

@@ -32,7 +32,7 @@ async function getWebAudioMediaStream() {
   }
 }
 
-export async function setupAudio() {
+export async function setupAudio(onPitchDetectedCallback) {
   // Get the browser's audio. Awaits user "allowing" it for the current tab.
   const mediaStream = await getWebAudioMediaStream();
 
@@ -61,7 +61,7 @@ export async function setupAudio() {
     node = new AudioNode(context, "AudioProcessor");
 
     // Send the
-    node.init(wasmBytes);
+    node.init(wasmBytes, onPitchDetectedCallback);
 
     // Connect the audio source (microphone output) to our analysis node.
     audioSource.connect(node);

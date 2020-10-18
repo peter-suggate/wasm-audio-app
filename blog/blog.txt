@@ -1,0 +1,791 @@
+## Introduction
+
+WebAssembly is supported by all modern browsers and is transforming the way we develop user experiences for the web. It is a simple binary executable format that allows libraries or even whole programs that have been written in other programming languages to run in the web browser.
+
+I first dug into WebAssembly because as a developer I’m always on lookout for ways to make my job easier and more productive. In my job, the following problems recur:
+
+- How best to develop an application from a single codebase and have it run well on all the target platforms?
+- When developing for the web, how do I create smooth and beautiful user experiences that run on both mobile and desktop environments?
+- How can I reduce time spent “reinventing the wheel” and, instead, take advantage of the many excellent open source libraries written in other languages such as C++ or Python in my web apps?
+
+I strongly believe WebAssembly helps answer our search for a web experience that truly rivals the native mobile or desktop experience.
+
+In this tutorial, I show how to create a simple pitch detector app (like a guitar tuner) using the browser’s built-in audio capabilities that runs at 60 fps - even on mobile devices. You do not need to understand web audio or even be familiar with Rust to follow along with this tutorial however comfort with Javascript is expected.
+
+## What this tutorial covers
+
+- Creating a simple function in Rust and calling it from Javascript (via WebAssembly)
+- Using the browser’s modern Audio Worklet API for high performance audio processing in the browser
+- Communicating between workers in Javascript
+- Tying it all together into a barebones React application
+
+## Why Wasm?
+
+There are several reasons why you should consider using WebAssembly in your next project:
+
+- It allows running code inside the browser that was written in conceivably any language,
+- Because it compiles to low-level instructions and sent to the browser, depending on the choice of language used, Wasm is able to operate at near native speeds. This has the potential to bring web application performance characteristics much closer to native experiences for both Mobile and Desktop,
+- Doesn’t have access to the DOM but interoperates with Javascript through an efficient shared memory protocol,
+- Make use of existing libraries (numerical, audio processing, ML) that are written in languages other than Javascript.
+
+### Project considerations
+
+WebAssembly's popularity will surely continue to grow in the months ahead, however it is not suitable for all web development. Things to consider include:
+
+- For simple projects, sticking with Javascript/HTML/CSS will likely deliver a working product in a shorter time,
+- Your application needs to run in older browsers such as Internet Explorer,
+- Your team prioritizes keeping development and CI tooling as simple as possible. Typical uses of WebAssembly require adding tools such as a language compiler into your tool chain.
+
+## Why Rust?
+
+WebAssembly lets you compile code written in another language to be run in the browser. With many possible choices of Wasm language, this tutorial chooses Rust. Rust was created by Mozilla in 2010 and is growing in popularity. Rust was voted for the fifth year straight the most-loved programming language by developers in Stack Overflow's 2020 survey. The following are some strong reasons to use Rust with WebAssembly.
+
+- First and foremost, Rust has a small runtime which means less code is sent to the browser when a user accesses the site, helping keep the website footprint low.
+- Rust has excellent Wasm support,
+- Rust provides C/C++ levels of performance and has a very safe memory model which significantly reduces chances of crashes or NullReference exceptions from other languages. This can lead to simpler error handling and higher chances of maintaining good UX in the presence of unanticipated issues.
+
+Rust’s many benefits also come with a steep learning curve, so choosing the right programming language depends on a variety of factors such as the makeup of the team that will be developing and maintaining the code.
+
+## Maintaining silky smooth web apps
+
+Now that we’ve chosen Rust as our Wasm language of choice, how might we use it to gain the performance benefits that led us to Wasm in the first place? For an application to feel “smooth” to users, it must be able to refresh as fast as the device’s screen. This is most often 60 frames per second (fps). This means that the application must be able to redraw its User Interface within 16-17ms (1000 ms / 60 fps) and so our pitch detection algorithm must complete in less than 16ms per animation frame.
+
+## Background - Web audio basics
+
+In this application, we’ll use a high performance WebAssembly module to perform the pitch detection. Further, we’ll ensure the computation doesn’t run on the main thread.
+
+Why can’t we keep things simple and perform pitch detection on the main thread?
+
+- Audio processing is often compute intensive. This is due to the large number of samples that need to be processed every second. For example, detecting audio pitch reliably requires analyzing the spectra of 44100 samples each second,
+- Avoid Javascript’s JIT compilation and garbage collection in the audio processing code.
+- If time taken to process a frame of audio eats significantly into the 16.7 ms frame budget, the UX will suffer with choppy animation,
+- We want our app to be smooth even on lower performing mobile devices!
+
+### Audio Worklets
+
+For this application we will use a browser standard for processing audio that has recently gained widespread browser compatibility. Specifically, we’ll use the Web Audio API and run expensive computation in an audio workleft.
+
+What is an AudioWorklet?
+“The AudioWorklet interface of the Web Audio API is used to supply custom audio processing scripts that execute in a separate thread to provide very low latency audio processing” - MDN
+
+Web Audio Worklets allow apps to continue achieving smooth 60 fps because audio processing can not hold up main thread. If the audio processing is too slow and falls behind, there will be other effects such as lagging audio. However, the UX will remain responsive to the user.
+
+The image below shows the key components of a node in the audio processing chain:
+
+- The `AudioWorklet Node` runs on the main thread and manages connection to other nodes in an audio processing chain.
+- AudioWorklet Processor runs on another thread and does the actual audio processing. This is the one we will be optimizing using Rust and WebAssembly.
+
+## Getting started
+
+### Pre-requisites
+
+This tutorial assumes you have [Node](https://nodejs.org/en/download/) installed which comes with `npm`. Any code editor will do but this guide uses VS Code.
+
+### Create a web app
+
+For this tutorial we’ll use `React`.
+
+In a terminal, run the following command:
+
+```
+$ npx create-react-app wasm-audio-app
+$ cd wasm-audio-app
+```
+
+This will create a fresh React application in the directory: `wasm-audio-app`
+
+`create-react-app` is a CLI for generating React-based Single Page Applications. It makes it incredibly easy to start a new project with React. However, the output project includes boilerplate code that will need to be replaced.
+
+First, although I highly recommend unit testing your application throughout development, testing is beyond the scope of this tutorial. So we’ll go ahead and delete `src/App.test.js` and `src/setupTests.js`.
+
+### Application overview
+
+There will be four main Javascript components in our application:
+
+- `src/App.js` - The application’s User Interface
+- `src/setupAudio.js` - Uses the web browser APIs to access an available audio recording device
+- `src/AudioNode.js` - contains an implementation of a web audio node which is connected to the web audio graph and runs in the main thread
+- `public/AudioProcessor.js` - This is where the audio processing happens. Runs in the web audio rendering thread and will consume the Wasm API
+
+## Define the application UI code
+
+First, let’s add our very simple UI elements in our pitch detector. In `src/App.js`, paste the following code:
+
+```js
+import React from "react";
+import "./App.css";
+import { setupAudio } from "./setupAudio";
+
+function PitchReadout({ running, latestPitch }) {
+  return (
+    <div className="PitchReadout">
+      {latestPitch
+        ? `Last detected pitch: ${latestPitch.toFixed(1)} Hz`
+        : running
+        ? "Make a sound"
+        : ""}
+    </div>
+  );
+}
+
+function AudioPlayerControl() {
+  const [audio, setAudio] = React.useState();
+  const [running, setRunning] = React.useState(false);
+  const [latestPitch, setLatestPitch] = React.useState(undefined);
+
+  // Initial state. Initialize the web audio once a user gesture on the page
+  // has been registered.
+  if (!audio) {
+    return (
+      <button
+        onClick={async () => {
+          setAudio(await setupAudio(setLatestPitch));
+          setRunning(true);
+        }}
+      >
+        Start listening
+      </button>
+    );
+  }
+
+  // Audio already initialized. Suspend / resume based on its current state.
+  const { context } = audio;
+  return (
+    <div>
+      <PitchReadout running={running} latestPitch={latestPitch} />
+      <button
+        onClick={async () => {
+          if (running) {
+            await context.suspend();
+            setRunning(context.state === "running");
+          } else {
+            await context.resume();
+            setRunning(context.state === "running");
+          }
+        }}
+        disabled={context.state !== "running" && context.state !== "suspended"}
+      >
+        {running ? "Pause" : "Resume"}
+      </button>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <div className="App">
+      <header className="App-header">
+        <AudioPlayerControl />
+      </header>
+    </div>
+  );
+}
+
+export default App;
+```
+
+## Loading Wasm into an Audio Worklet
+
+## Add code to setup web audio
+
+In order for the web application to access the client machine’s microphone, the following steps must be performed:
+
+- Gain the user’s permission for the browser to access any connected microphone,
+- Define an audio processing graph which processes incoming audio samples produced by the microphone to produce a sequence of detected pitches.
+
+In `src/setupAudio.js`, paste the following:
+
+```js
+import AudioNode from "./AudioNode";
+
+async function getWebAudioMediaStream() {
+  if (!window.navigator.mediaDevices) {
+    throw new Error(
+      "This browser does not support web audio or it is not enabled."
+    );
+  }
+
+  try {
+    const result = await window.navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: false,
+    });
+
+    return result;
+  } catch (e) {
+    switch (e.name) {
+      case "NotAllowedError":
+        throw new Error(
+          "A recording device was found but has been disallowed for this application. Enable the device in the browser's settings."
+        );
+
+      case "NotFoundError":
+        throw new Error(
+          "No recording device was found. Please attach a microphone and click Retry."
+        );
+
+      default:
+        throw e;
+    }
+  }
+}
+
+export async function setupAudio(onPitchDetectedCallback) {
+  // Get the browser's audio. Awaits user "allowing" it for the current tab.
+  const mediaStream = await getWebAudioMediaStream();
+
+  const context = new window.AudioContext();
+  const audioSource = context.createMediaStreamSource(mediaStream);
+
+  let node;
+
+  try {
+    // Fetch the WebAssembly module that performs pitch detection.
+    const response = await window.fetch("wasm-audio/wasm_audio_bg.wasm");
+    const wasmBytes = await response.arrayBuffer();
+
+    // Add our audio processor worklet to the context.
+    const processorUrl = "AudioProcessor.js";
+    try {
+      await context.audioWorklet.addModule(processorUrl);
+    } catch (e) {
+      throw new Error(
+        `Failed to load audio analyzer worklet at url: ${processorUrl}. Further info: ${e.message}`
+      );
+    }
+
+    // Create the AudioWorkletNode which enables the main Javascript thread to
+    // communicate with the audio processor (which runs in a Worklet).
+    node = new AudioNode(context, "AudioProcessor");
+
+    // Send the
+    node.init(wasmBytes, onPitchDetectedCallback);
+
+    // Connect the audio source (microphone output) to our analysis node.
+    audioSource.connect(node);
+
+    // Connect our analysis node to the output. Required even though we do not
+    // output any audio. Allows further downstream audio processing or output to
+    // occur.
+    node.connect(context.destination);
+  } catch (e) {
+    throw new Error(
+      `Failed to load audio analyzer WASM module. Further info: ${e.message}`
+    );
+  }
+
+  return { context, node };
+}
+```
+
+The above code snippet includes steps that a WebAssembly module is available at `src/public/wasm-audio`. This will be accomplished in later steps.
+
+## Add audio worklet code
+
+`AudioNode.js` contains any logic specific to our pitch detector that executes on the main Javascript thread. This is the mechanism whereby pitches detected using the WebAssembly module working in the AudioWorklet thread will make their way to the main thread and React for rendering.
+
+In `src/AudioNode.js`, paste the following:
+
+```js
+export default class AudioNode extends AudioWorkletNode {
+  /**
+   * Initialize the Audio processor by sending the fetched WebAssembly module to
+   * the processor worklet.
+   *
+   * @param {ArrayBuffer} wasmBytes Sequence of bytes representing the entire
+   * Wasm module that will handle pitch detection.
+   */
+  init(wasmBytes, onPitchDetectedCallback) {
+    this.onPitchDetectedCallback = onPitchDetectedCallback;
+
+    // Listen to messages sent from the audio processor.
+    this.port.onmessage = (event) => this.onmessage(event.data);
+
+    this.port.postMessage({
+      type: "send-wasm-module",
+      wasmBytes,
+      sampleRate: this.context.sampleRate,
+    });
+
+    this.onprocessorerror = (e) => {
+      console.log(
+        `An error from AudioWorkletProcessor.process() occurred: ${e}`
+      );
+    };
+  }
+
+  onmessage(event) {
+    if (event.type === "pitch") {
+      this.onPitchDetectedCallback(event.pitch);
+    }
+  }
+}
+```
+
+The keys tasks performed by `AudioNode` are:
+
+- Sends the WebAssembly module as a sequence of raw bytes to the AudioWorklet thread. This allows the AudioProcessor which runs on the background thread to load the Wasm module which performs the pitch detection calculations.
+- Communicates with the AudioProcessor, receiving detected pitches as they arrive and forwarding them on to the UI via `onPitchDetectedCallback()` for display.
+
+Note: this object runs on the main thread so should not perform any further processing on detected pitches in case this is expensive and causes fps drops.
+
+### AudioProcessor
+
+Create a new file `src/AudioProcessor.js` and paste the following code:
+
+```js
+import "./TextEncoder.js";
+import init, { WasmPitchDetector } from "./wasm-audio/wasm_audio.js";
+
+class AudioProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+
+    this.samples = [];
+
+    this.port.onmessage = (event) => this.onmessage(event.data);
+
+    this.detector = null;
+  }
+
+  onmessage = (eventData) => {
+    if (eventData.type === "send-wasm-module") {
+      // AudioNode has sent us a message containing the Wasm library to load into
+      // our context as well as information about the audio device used for
+      // recording.
+      init(WebAssembly.compile(eventData.wasmBytes)).then(() => {
+        this.detector = WasmPitchDetector.new(eventData.sampleRate);
+      });
+    }
+  };
+
+  process(inputs, outputs) {
+    const BUFFER_LENGTH = 1024;
+
+    // By default, the node has single input and output.
+    const inputChannels = inputs[0];
+    const inputSamples = inputChannels[0];
+    if (!inputSamples) return;
+
+    this.samples = [...this.samples, ...inputSamples];
+    this.samples = this.samples.slice(
+      Math.max(0, this.samples.length - BUFFER_LENGTH)
+    );
+
+    if (this.samples.length >= 1024 && this.detector) {
+      const result = this.detector.detect_pitch(this.samples);
+
+      if (result !== 0) {
+        this.port.postMessage({ type: "pitch", pitch: result });
+      }
+    }
+
+    return true;
+  }
+}
+
+registerProcessor("AudioProcessor", AudioProcessor);
+```
+
+The `AudioProcessor` is a companion to the `AudioNode` but runs in a separate thread so that audio processing computation can be performed without blocking work done on the main thread.
+
+The main functions performed above are:
+
+- Handles the `"send-wasm-module"` message sent from `AudioNode`, loading the Wasm module into the Aworklet,
+- Processes audio samples received from the browser's audio graph, delegates pitch detection computation to the Wasm module and then sends any detected pitch back to `AudioNode` for display in the UI,
+- Registers itself.
+
+## Enter Rust and WebAssembly
+
+We now have a Javascript application which accesses the browser's audio capability, builds an audio graph and delegates work to a Wasm module. The final piece that remains is to create the Wasm module.
+
+### Get Rust
+
+You will need the standard Rust toolchain, including `rustup`, `rustc`, and `cargo`. Follow [these instructions](https://www.rust-lang.org/tools/install) to build the Rust chain for development.
+
+### Install tools for building WebAssembly components in Rust
+
+`wasm-pack` allows easily building, testing, and publishing Rust-generated WebAssembly. Install wasm-pack [here](https://rustwasm.github.io/wasm-pack/installer).
+
+`cargo-generate` helps to get a new Rust project up-and-running by leveraging a pre-existing git repository as a template. We’ll use this to bootstrap a simple audio analyzer in rust that can be accessed using WebAssembly from the browser.
+
+Install cargo-generate:
+
+```
+$ cargo install cargo-generate
+```
+
+### Create our WebAssembly module
+
+Within your existing application directory, clone the project template with this command:
+
+```
+$ cargo generate --git https://github.com/rustwasm/wasm-pack-template
+```
+
+This should prompt you for the new project's name. We will use "wasm-audio".
+
+In the interests of brevity, we won’t be analyzing the output of this project in detail. For a more detailed overview on using WebAssembly with Rust, see https://rustwasm.github.io/docs/book/
+
+In the `wasm-audio` directory, there will now be a `Cargo.toml` file with the following contents:
+
+```rust
+[package]
+name = "wasm-audio"
+version = "0.1.0"
+authors = ["Your Name <you@example.com"]
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+wasm-bindgen = "0.2.63"
+
+...
+```
+
+### Implement a pitch detector in Rust
+
+The purpose of this app is to be able to detect a musician's voice or instrument pitch in real time. To ensure this executes as quickly as possible, a WebAssembly module is tasked with calculating the pitch. For single-voice pitch detection, we’ll use the “McLeod” pitch method that is implemented in the existing Rust [~pitch-detection~](https://lib.rs/crates/pitch-detection) library.
+
+Much like Node’s `npm` package manager, Rust includes a package manager of its own called `cargo`. This allows easily installing packages that have been published to the Rust crate registry.
+
+We can find the package we wish to install plus help documentation [here](https://lib.rs/crates/pitch-detection)
+
+To add the dependency, edit `Cargo.toml`:
+
+```rust
+[dependencies]
+wasm-bindgen = "0.2.63"
+pitch-detection = "0.1"
+```
+
+This instructs Cargo to download and install the `pitch-detection` dependency when the next `cargo build` or, since we’re targeting WebAssembly, this will be performed in the next `wasm-pack`.
+
+### Write the Rust function
+
+In `wasm-audio/lib.rs`, add the following:
+
+```rust
+use pitch_detection::{McLeodDetector, PitchDetector};
+use wasm_bindgen::prelude::*;
+mod utils;
+
+const SIZE: usize = 1024; // Number of audio samples for each analysis
+const PADDING: usize = SIZE / 2; // Padding used for the algorithm
+const POWER_THRESHOLD: f32 = 5.0;
+const CLARITY_THRESHOLD: f32 = 0.7;
+
+#[wasm_bindgen]
+pub struct WasmPitchDetector {
+  sample_rate: usize,
+  detector: McLeodDetector<f32>,
+}
+
+#[wasm_bindgen]
+impl WasmPitchDetector {
+  pub fn new(sample_rate: usize) -> WasmPitchDetector {
+    utils::set_panic_hook();
+
+    WasmPitchDetector {
+      sample_rate,
+      detector: McLeodDetector::<f32>::new(SIZE, PADDING),
+    }
+  }
+
+  pub fn detect_pitch(&mut self, audio_samples: Vec<f32>) -> f32 {
+    if audio_samples.len() < SIZE {
+      panic!("Insufficient samples passed to detect_pitch(). Expected an array containing {} elements but got {}", SIZE, audio_samples.len())
+    }
+
+    let optional_pitch = self.detector.get_pitch(
+      &audio_samples,
+      self.sample_rate,
+      POWER_THRESHOLD,
+      CLARITY_THRESHOLD,
+    );
+
+    match optional_pitch {
+      Some(pitch) => pitch.frequency,
+      None => 0.0,
+    }
+  }
+}
+```
+
+Let’s examine this in more detail:
+
+```
+#[wasm_bindgen]
+```
+
+`wasm_bindgen` is a Rust macro which greatly helps implement the binding between Javascript and Rust. When compiled to WebAssembly, this macro instructs the compiler to create a Javascript binding to a class. The above Rust code translates simply to:
+
+`wasm-audio/wasm_audio.js`:
+
+```js
+...
+export class WasmPitchDetector {
+  static __wrap(ptr) {
+    const obj = Object.create(WasmPitchDetector.prototype);
+    obj.ptr = ptr;
+
+    return obj;
+  }
+
+  free() {
+    const ptr = this.ptr;
+    this.ptr = 0;
+
+    wasm.__wbg_wasmpitchdetector_free(ptr);
+  }
+  /**
+   * @param {number} sample_rate
+   * @returns {WasmPitchDetector}
+   */
+  static new(sample_rate) {
+    var ret = wasm.wasmpitchdetector_new(sample_rate);
+    return WasmPitchDetector.__wrap(ret);
+  }
+  /**
+   * @param {Float32Array} audio_samples
+   * @returns {number}
+   */
+  detect_pitch(audio_samples) {
+    var ptr0 = passArrayF32ToWasm0(audio_samples, wasm.__wbindgen_malloc);
+    var len0 = WASM_VECTOR_LEN;
+    var ret = wasm.wasmpitchdetector_detect_pitch(this.ptr, ptr0, len0);
+    return ret;
+  }
+}
+...
+```
+
+Without going into detail, we see that `wasm-pack` will generate Javascript bindings that are very thin wrappers for calls into the Wasm module. This lightweight abstraction combined with the direct shared memory between Javascript and Wasm code delivers the superb levels of performance we can expect when using Wasm.
+
+```rust
+#[wasm_bindgen]
+pub struct WasmPitchDetector {
+  sample_rate: usize,
+  detector: McLeodDetector<f32>,
+}
+
+#[wasm_bindgen]
+impl WasmPitchDetector {
+...
+}
+```
+
+Rust does not have a concept of classes. Rather, an object's data is described by a `struct` and its behaviour through `impl`s or `trait`s. To learn more, see [here](https://learning-rust.github.io/docs/b2.structs.html) and [here](https://learning-rust.github.io/docs/b5.impls_and_traits.html).
+
+The reason we chose to expose the pitch detection functionality via an object, rather than plain function is so that we can perform one-time setup during creation of the `WasmPitchDetector`. This keeps the `detect_pitch` function fast by performing only computation required to determine the next pitch.
+
+```rust
+pub fn new(sample_rate: usize) -> WasmPitchDetector {
+  utils::set_panic_hook();
+
+  WasmPitchDetector {
+    sample_rate,
+    detector: McLeodDetector::<f32>::new(SIZE, PADDING),
+  }
+}
+```
+
+```rust
+set_panic_hook();
+```
+
+```rust
+pub fn detect_pitch(&mut self, audio_samples: Vec<f32>) -> f32 {
+  ...
+}
+```
+
+This is what a member function definition looks like in rust. A public function `detect_pitch` is defined that accepts a reference to the object containing `struct` and `impl` fields. In addition, it expects an arbitrary-sized array of 32-bit floating point numbers, an audio sampling rate (e.g. 44,100 Hz) and returns a single number. Here, that will be the resulting pitch in Hz.
+
+```rust
+if audio_samples.len() < SIZE {
+  panic!("Insufficient samples passed to detect_pitch(). Expected an array containing {} elements but got {}", SIZE, audio_samples.len())
+}
+```
+
+Detects an error condition, namely, insufficient samples were provided to the function. The McLeod detector performs a Fast-fourier transform on the audio samples which requires a minimum 'window width' criteria to be met. In this case, it's configured to expect 1024 samples.
+
+```rust
+let optional_pitch = self.detector.get_pitch(
+  &audio_samples,
+  self.sample_rate,
+  POWER_THRESHOLD,
+  CLARITY_THRESHOLD,
+);
+```
+
+Calls into the 3rd-party library to calculate pitch from the latest audio samples. `POWER_THRESHOLD` and `CLARITY_THRESHOLD` can be adjusted to tune the sensitibity of the algorithm.
+
+## Building the Wasm
+
+When developing Rust applications, the usual build procedure is to invoke a build, for example using `cargo build`. However, we want to generate a WebAssembly module so will make use of `wasm-pack`.
+
+`wasm-pack` supports a variety of build targets. Because we will consume the module directly from an Audio Worklet, we will perform the build targeting the `web` option. Other targets include building for a bundler such as webpack or for consuming from Node.js.
+
+```
+$ wasm-pack build --target web
+```
+
+If successful, an npm module is created under `./pkg`.
+
+This is a Javascript module with its very own auto-generated package.json. This can be published to npm if desired. To keep things simple for now, we can simply copy and paste this pkg under our web app’s public folder `/public/wasm`
+
+```
+$ cp -R ./wasm-audio/pkg ./public/wasm-audio
+```
+
+Now when we refresh the browser and attempt to record audio (using Chrome, with Developer tools), we are met with an error:
+
+![](./img/TextDecoderError.png)
+
+The reason for this is that the modules produced by Rust's Wasm package generator assume certain functionality will always be provided by the browser. This assumption holds for modern browsers when the Wasm module is being run from the main thread or even a worker thread. However, for Worklets (such as the Audio worklet context needed in this tutorial), TextDecoder and TextEncoder are not part of the spec and so are not available.
+
+TextDecoder is used by Rust's Wasm code generator to convert from Wasm's flat, packed shared memory representation to the string format that javascript expects. Put an other way, in order to see strings produced by the Wasm, TextDecoder must be defined.
+
+This issue is a symptom of the relative newness of WebAssembly. As browser support improves to support common WebAssembly patterns out of the box, issues like these will disappear.
+
+For now, we are able to work around it by defining a polyfill for TextDecoder, courtesy of https://gist.github.com/Yaffle/5458286
+
+Create a new file `/public/TextEncoder.js` and import it from `public/AudioProcessor.js`:
+
+```js
+import "./TextEncoder.js";
+```
+
+Make sure that this import statement comes before the `wasm_audio` import.
+
+Paste the following implementation source code into the newly created file:
+
+```js
+// TextEncoder/TextDecoder polyfills for utf-8 - an implementation of TextEncoder/TextDecoder APIs
+// Written in 2013 by Viktor Mukhachev <vic99999@yandex.ru>
+// To the extent possible under law, the author(s) have dedicated all copyright and related and neighboring rights to this software to the public domain worldwide. This software is distributed without any warranty.
+// You should have received a copy of the CC0 Public Domain Dedication along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+
+// Some important notes about the polyfill below:
+// Native TextEncoder/TextDecoder implementation is overwritten
+// String.prototype.codePointAt polyfill not included, as well as String.fromCodePoint
+// TextEncoder.prototype.encode returns a regular array instead of Uint8Array
+// No options (fatal of the TextDecoder constructor and stream of the TextDecoder.prototype.decode method) are supported.
+// TextDecoder.prototype.decode does not valid byte sequences
+// This is a demonstrative implementation not intended to have the best performance
+
+// http://encoding.spec.whatwg.org/#textencoder
+(function (window) {
+  "use strict";
+  function TextEncoder() {}
+  TextEncoder.prototype.encode = function (string) {
+    var octets = [];
+    var length = string.length;
+    var i = 0;
+    while (i < length) {
+      var codePoint = string.codePointAt(i);
+      var c = 0;
+      var bits = 0;
+      if (codePoint <= 0x0000007f) {
+        c = 0;
+        bits = 0x00;
+      } else if (codePoint <= 0x000007ff) {
+        c = 6;
+        bits = 0xc0;
+      } else if (codePoint <= 0x0000ffff) {
+        c = 12;
+        bits = 0xe0;
+      } else if (codePoint <= 0x001fffff) {
+        c = 18;
+        bits = 0xf0;
+      }
+      octets.push(bits | (codePoint >> c));
+      c -= 6;
+      while (c >= 0) {
+        octets.push(0x80 | ((codePoint >> c) & 0x3f));
+        c -= 6;
+      }
+      i += codePoint >= 0x10000 ? 2 : 1;
+    }
+    return octets;
+  };
+  globalThis.TextEncoder = TextEncoder;
+  if (!window["TextEncoder"]) window["TextEncoder"] = TextEncoder;
+
+  function TextDecoder() {}
+  TextDecoder.prototype.decode = function (octets) {
+    if (!octets) return "";
+    var string = "";
+    var i = 0;
+    while (i < octets.length) {
+      var octet = octets[i];
+      var bytesNeeded = 0;
+      var codePoint = 0;
+      if (octet <= 0x7f) {
+        bytesNeeded = 0;
+        codePoint = octet & 0xff;
+      } else if (octet <= 0xdf) {
+        bytesNeeded = 1;
+        codePoint = octet & 0x1f;
+      } else if (octet <= 0xef) {
+        bytesNeeded = 2;
+        codePoint = octet & 0x0f;
+      } else if (octet <= 0xf4) {
+        bytesNeeded = 3;
+        codePoint = octet & 0x07;
+      }
+      if (octets.length - i - bytesNeeded > 0) {
+        var k = 0;
+        while (k < bytesNeeded) {
+          octet = octets[i + k + 1];
+          codePoint = (codePoint << 6) | (octet & 0x3f);
+          k += 1;
+        }
+      } else {
+        codePoint = 0xfffd;
+        bytesNeeded = octets.length - i;
+      }
+      string += String.fromCodePoint(codePoint);
+      i += bytesNeeded + 1;
+    }
+    return string;
+  };
+  globalThis.TextDecoder = TextDecoder;
+  if (!window["TextDecoder"]) window["TextDecoder"] = TextDecoder;
+})(
+  typeof globalThis == "" + void 0
+    ? typeof global == "" + void 0
+      ? typeof self == "" + void 0
+        ? this
+        : self
+      : global
+    : globalThis
+);
+```
+
+## Putting it all together
+
+<Performance profiling results of app. Show computation time for pitch detection and resulting fps>
+
+## Summary
+
+In this tutorial we have built a web application from scratch that performs computationally expensive audio processing using a WebAssembly. The benefit that WebAssembly provided was the ability to take advantage of near native performance of Rust. Further this work was performed off the main Javascript thread, allowing for silky smooth frame rates even on mobile devices.
+
+## Takeaways
+
+### What we learned
+
+- A technique enabling efficient audio (and video) processing in the browser
+- Rust makes it easy to write Wasm modules
+- Optimizing compute intensive work using Wasm
+
+### Things to watch out for
+
+- Tooling for Wasm within worklets is still evolving. For example, we needed to polyfill required TextDecoder that was missing from the AudioWorklet context.
+- Although the application we developed in this application was very simple, building the WebAssembly module and loading it from the Audio Worklet required significant setup. Introducing Wasm to projects does introduce an increase in tooling complexity which is important to keep in mind.
