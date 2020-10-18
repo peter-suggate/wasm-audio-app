@@ -15,7 +15,10 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "build-wasm": "wasm-pack build ./wasm-audio --target web && rm -rf ./public/wasm-audio && cp -R ./wasm-audio/pkg ./public/wasm-audio"
+    "compile-wasm": "wasm-pack build ./wasm-audio --target web",
+    "install-wasm": "xcopy /E /Y .\\wasm-audio\\pkg .\\public\\wasm-audio",
+    "build-wasm": "wasm-pack build ./wasm-audio --target web && rm -rf ./public/wasm-audio && cp -R ./wasm-audio/pkg ./public/wasm-audio",
+    "build-wasm-win": "npm run compile-wasm && npm run install-wasm"
   },
   "eslintConfig": {
     "extends": "react-app"
