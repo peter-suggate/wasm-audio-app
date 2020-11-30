@@ -4,7 +4,7 @@ import { setupAudio } from "./setupAudio";
 
 function PitchReadout({ running, latestPitch }) {
   return (
-    <div className="PitchReadout">
+    <div className="Pitch-readout">
       {latestPitch
         ? `Latest pitch: ${latestPitch.toFixed(1)} Hz`
         : running
@@ -14,8 +14,8 @@ function PitchReadout({ running, latestPitch }) {
   );
 }
 
-function AudioPlayerControl() {
-  const [audio, setAudio] = React.useState();
+function AudioRecorderControl() {
+  const [audio, setAudio] = React.useState(undefined);
   const [running, setRunning] = React.useState(false);
   const [latestPitch, setLatestPitch] = React.useState(undefined);
 
@@ -38,7 +38,6 @@ function AudioPlayerControl() {
   const { context } = audio;
   return (
     <div>
-      <PitchReadout running={running} latestPitch={latestPitch} />
       <button
         onClick={async () => {
           if (running) {
@@ -53,6 +52,7 @@ function AudioPlayerControl() {
       >
         {running ? "Pause" : "Resume"}
       </button>
+      <PitchReadout running={running} latestPitch={latestPitch} />
     </div>
   );
 }
@@ -61,8 +61,11 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <AudioPlayerControl />
+        Wasm Audio Tutorial
       </header>
+      <div className="App-content">
+        <AudioRecorderControl />
+      </div>
     </div>
   );
 }
