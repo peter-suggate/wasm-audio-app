@@ -60,8 +60,18 @@ export async function setupAudio(onPitchDetectedCallback) {
     // communicate with the audio processor (which runs in a Worklet).
     node = new AudioNode(context, "AudioProcessor");
 
-    // Send the
-    node.init(wasmBytes, onPitchDetectedCallback);
+    // numAudioSamplesPerAnalysis specifies the number of consecutive audio samples that
+    // the pitch detection algorithm calculates for each unit of work. Larger values tend
+    // to produce slightly more accurate results but are more expensive to compute and
+    // can lead to notes being missed in faster passages i.e. where the music note is
+    // changing rapidly. 1024 is usually a good balance between efficiency and accuracy
+    // for music analysis.
+    const numAudioSamplesPerAnalysis = 1024;
+
+    // Send the Wasm module to the audio node which in turn passes it to the
+    // processor running in the Worklet thread. Also, pass any configuration
+    // parameters for the Wasm detection algorithm.
+    node.init(wasmBytes, onPitchDetectedCallback, numAudioSamplesPerAnalysis);
 
     // Connect the audio source (microphone output) to our analysis node.
     audioSource.connect(node);
@@ -70,9 +80,9 @@ export async function setupAudio(onPitchDetectedCallback) {
     // output any audio. Allows further downstream audio processing or output to
     // occur.
     node.connect(context.destination);
-  } catch (e) {
+  } catch (err) {
     throw new Error(
-      `Failed to load audio analyzer WASM module. Further info: ${e.message}`
+      `Failed to load audio analyzer WASM module. Further info: ${err.message}`
     );
   }
 
