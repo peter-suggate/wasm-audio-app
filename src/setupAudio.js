@@ -1,4 +1,4 @@
-import AudioNode from "./AudioNode";
+import PitchNode from "./PitchNode";
 
 async function getWebAudioMediaStream() {
   if (!window.navigator.mediaDevices) {
@@ -47,7 +47,7 @@ export async function setupAudio(onPitchDetectedCallback) {
     const wasmBytes = await response.arrayBuffer();
 
     // Add our audio processor worklet to the context.
-    const processorUrl = "AudioProcessor.js";
+    const processorUrl = "PitchProcessor.js";
     try {
       await context.audioWorklet.addModule(processorUrl);
     } catch (e) {
@@ -58,7 +58,7 @@ export async function setupAudio(onPitchDetectedCallback) {
 
     // Create the AudioWorkletNode which enables the main Javascript thread to
     // communicate with the audio processor (which runs in a Worklet).
-    node = new AudioNode(context, "AudioProcessor");
+    node = new PitchNode(context, "PitchProcessor");
 
     // numAudioSamplesPerAnalysis specifies the number of consecutive audio samples that
     // the pitch detection algorithm calculates for each unit of work. Larger values tend

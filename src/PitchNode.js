@@ -1,4 +1,4 @@
-export default class AudioNode extends AudioWorkletNode {
+export default class PitchNode extends AudioWorkletNode {
   /**
    * Initialize the Audio processor by sending the fetched WebAssembly module to
    * the processor worklet.
@@ -21,7 +21,7 @@ export default class AudioNode extends AudioWorkletNode {
     });
   }
 
-  // Handle an uncaught exception thrown in the AudioProcessor.
+  // Handle an uncaught exception thrown in the PitchProcessor.
   onprocessorerror(err) {
     console.log(
       `An error from AudioWorkletProcessor.process() occurred: ${err}`
@@ -30,7 +30,7 @@ export default class AudioNode extends AudioWorkletNode {
 
   onmessage(event) {
     if (event.type === 'wasm-module-loaded') {
-      // The Wasm module was successfully sent to the AudioProcessor running on the
+      // The Wasm module was successfully sent to the PitchProcessor running on the
       // AudioWorklet thread and compiled. This is our cue to configure the pitch
       // detector.
       this.port.postMessage({

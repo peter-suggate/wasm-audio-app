@@ -1,7 +1,7 @@
 import "./TextEncoder.js";
 import init, { WasmPitchDetector } from "./wasm-audio/wasm_audio.js";
 
-class AudioProcessor extends AudioWorkletProcessor {
+class PitchProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
@@ -10,7 +10,7 @@ class AudioProcessor extends AudioWorkletProcessor {
     this.samples = undefined;
     this.totalSamples = 0;
 
-    // Listen to events from the AudioNode running on the main thread.
+    // Listen to events from the PitchNode running on the main thread.
     this.port.onmessage = (event) => this.onmessage(event.data);
 
     this.detector = null;
@@ -18,7 +18,7 @@ class AudioProcessor extends AudioWorkletProcessor {
 
   onmessage(event) {
     if (event.type === "send-wasm-module") {
-      // AudioNode has sent us a message containing the Wasm library to load into
+      // PitchNode has sent us a message containing the Wasm library to load into
       // our context as well as information about the audio device used for
       // recording.
       init(WebAssembly.compile(event.wasmBytes)).then(() => {
@@ -93,9 +93,9 @@ class AudioProcessor extends AudioWorkletProcessor {
       }
     }
 
-    // Returning true tells Audio system to keep going.
+    // Returning true tells the Audio system to keep going.
     return true;
   }
 }
 
-registerProcessor("AudioProcessor", AudioProcessor);
+registerProcessor("PitchProcessor", PitchProcessor);

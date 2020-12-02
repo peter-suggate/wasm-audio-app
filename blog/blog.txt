@@ -104,8 +104,8 @@ There will be four main Javascript components in our application:
 
 - `src/App.js` - The application’s User Interface
 - `src/setupAudio.js` - Uses the web browser APIs to access an available audio recording device
-- `src/AudioNode.js` - contains an implementation of a web audio node which is connected to the web audio graph and runs in the main thread
-- `public/AudioProcessor.js` - This is where the audio processing happens. Runs in the web audio rendering thread and will consume the Wasm API
+- `src/PitchNode.js` - contains an implementation of a web audio node which is connected to the web audio graph and runs in the main thread
+- `public/PitchProcessor.js` - This is where the audio processing happens. Runs in the web audio rendering thread and will consume the Wasm API
 
 ## Define the application UI code
 
@@ -196,7 +196,7 @@ In order for the web application to access the client machine’s microphone, th
 In `src/setupAudio.js`, paste the following:
 
 ```js
-import AudioNode from "./AudioNode";
+import PitchNode from "./PitchNode";
 
 async function getWebAudioMediaStream() {
   if (!window.navigator.mediaDevices) {
@@ -245,7 +245,7 @@ export async function setupAudio(onPitchDetectedCallback) {
     const wasmBytes = await response.arrayBuffer();
 
     // Add our audio processor worklet to the context.
-    const processorUrl = "AudioProcessor.js";
+    const processorUrl = "PitchProcessor.js";
     try {
       await context.audioWorklet.addModule(processorUrl);
     } catch (e) {
@@ -256,7 +256,7 @@ export async function setupAudio(onPitchDetectedCallback) {
 
     // Create the AudioWorkletNode which enables the main Javascript thread to
     // communicate with the audio processor (which runs in a Worklet).
-    node = new AudioNode(context, "AudioProcessor");
+    node = new PitchNode(context, "PitchProcessor");
 
     // Send the
     node.init(wasmBytes, onPitchDetectedCallback);
@@ -282,12 +282,12 @@ The above code snippet includes steps that a WebAssembly module is available at 
 
 ## Add audio worklet code
 
-`AudioNode.js` contains any logic specific to our pitch detector that executes on the main Javascript thread. This is the mechanism whereby pitches detected using the WebAssembly module working in the AudioWorklet thread will make their way to the main thread and React for rendering.
+`PitchNode.js` contains any logic specific to our pitch detector that executes on the main Javascript thread. This is the mechanism whereby pitches detected using the WebAssembly module working in the AudioWorklet thread will make their way to the main thread and React for rendering.
 
-In `src/AudioNode.js`, paste the following:
+In `src/PitchNode.js`, paste the following:
 
 ```js
-export default class AudioNode extends AudioWorkletNode {
+export default class PitchNode extends AudioWorkletNode {
   /**
    * Initialize the Audio processor by sending the fetched WebAssembly module to
    * the processor worklet.
@@ -322,22 +322,22 @@ export default class AudioNode extends AudioWorkletNode {
 }
 ```
 
-The keys tasks performed by `AudioNode` are:
+The keys tasks performed by `PitchNode` are:
 
-- Sends the WebAssembly module as a sequence of raw bytes to the AudioWorklet thread. This allows the AudioProcessor which runs on the background thread to load the Wasm module which performs the pitch detection calculations.
-- Communicates with the AudioProcessor, receiving detected pitches as they arrive and forwarding them on to the UI via `onPitchDetectedCallback()` for display.
+- Sends the WebAssembly module as a sequence of raw bytes to the AudioWorklet thread. This allows the PitchProcessor which runs on the background thread to load the Wasm module which performs the pitch detection calculations.
+- Communicates with the PitchProcessor, receiving detected pitches as they arrive and forwarding them on to the UI via `onPitchDetectedCallback()` for display.
 
 Note: this object runs on the main thread so should not perform any further processing on detected pitches in case this is expensive and causes fps drops.
 
-### AudioProcessor
+### PitchProcessor
 
-Create a new file `src/AudioProcessor.js` and paste the following code:
+Create a new file `src/PitchProcessor.js` and paste the following code:
 
 ```js
 import "./TextEncoder.js";
 import init, { WasmPitchDetector } from "./wasm-audio/wasm_audio.js";
 
-class AudioProcessor extends AudioWorkletProcessor {
+class PitchProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
@@ -350,7 +350,7 @@ class AudioProcessor extends AudioWorkletProcessor {
 
   onmessage = (eventData) => {
     if (eventData.type === "send-wasm-module") {
-      // AudioNode has sent us a message containing the Wasm library to load into
+      // PitchNode has sent us a message containing the Wasm library to load into
       // our context as well as information about the audio device used for
       // recording.
       init(WebAssembly.compile(eventData.wasmBytes)).then(() => {
@@ -384,15 +384,15 @@ class AudioProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor("AudioProcessor", AudioProcessor);
+registerProcessor("PitchProcessor", PitchProcessor);
 ```
 
-The `AudioProcessor` is a companion to the `AudioNode` but runs in a separate thread so that audio processing computation can be performed without blocking work done on the main thread.
+The `PitchProcessor` is a companion to the `PitchNode` but runs in a separate thread so that audio processing computation can be performed without blocking work done on the main thread.
 
 The main functions performed above are:
 
-- Handles the `"send-wasm-module"` message sent from `AudioNode`, loading the Wasm module into the Aworklet,
-- Processes audio samples received from the browser's audio graph, delegates pitch detection computation to the Wasm module and then sends any detected pitch back to `AudioNode` for display in the UI,
+- Handles the `"send-wasm-module"` message sent from `PitchNode`, loading the Wasm module into the Aworklet,
+- Processes audio samples received from the browser's audio graph, delegates pitch detection computation to the Wasm module and then sends any detected pitch back to `PitchNode` for display in the UI,
 - Registers itself.
 
 ## Enter Rust and WebAssembly
@@ -656,7 +656,7 @@ This issue is a symptom of the relative newness of WebAssembly. As browser suppo
 
 For now, we are able to work around it by defining a polyfill for TextDecoder, courtesy of https://gist.github.com/Yaffle/5458286
 
-Create a new file `/public/TextEncoder.js` and import it from `public/AudioProcessor.js`:
+Create a new file `/public/TextEncoder.js` and import it from `public/PitchProcessor.js`:
 
 ```js
 import "./TextEncoder.js";
