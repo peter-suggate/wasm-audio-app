@@ -47,9 +47,9 @@ class PitchProcessor extends AudioWorkletProcessor {
     // outputs.
 
     // inputs holds one or more "channels" of samples. For example, a microphone
-    // that records "in sterio" would provide two channels. For this simple app,
+    // that records "in stereo" would provide two channels. For this simple app,
     // we use assume either "mono" input or the "left" channel if microphone is
-    // sterio.
+    // stereo.
 
     const inputChannels = inputs[0];
 
