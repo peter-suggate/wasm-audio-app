@@ -51,6 +51,10 @@ class PitchProcessor extends AudioWorkletProcessor {
     // we use assume either "mono" input or the "left" channel if microphone is
     // sterio.
 
+    // Handle occasional empty input channels sent to process() by the browser
+    // while audio is initializing.
+    if (!inputs.length) return;
+
     const inputChannels = inputs[0];
 
     // inputSamples holds an array of new samples to process.
