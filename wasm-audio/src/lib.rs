@@ -29,7 +29,7 @@ impl WasmPitchDetector {
 
   pub fn detect_pitch(&mut self, audio_samples: Vec<f32>) -> f32 {
     if audio_samples.len() < self.fft_size {
-      panic!("Insufficient samples passed to detect_pitch(). Expected an array containing {} elements but got {}", self.fft_size, audio_samples.len())
+      panic!("Insufficient samples passed to detect_pitch(). Expected an array containing {} elements but got {}", self.fft_size, audio_samples.len());
     }
 
     // Include only notes that exceed a power threshold which relates to the
