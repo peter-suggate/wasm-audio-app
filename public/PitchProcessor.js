@@ -6,8 +6,10 @@ class PitchProcessor extends AudioWorkletProcessor {
     super();
 
     // Initialized to an array holding a buffer of samples for analysis later -
-    // once we know how many samples need to be stored.
-    this.samples = undefined;
+    // once we know how many samples need to be stored. Meanwhile, an empty
+    // array is used, so that early calls to process() with empty channels
+    // do not break initialization.
+    this.samples = [];
     this.totalSamples = 0;
 
     // Listen to events from the PitchNode running on the main thread.
@@ -47,13 +49,9 @@ class PitchProcessor extends AudioWorkletProcessor {
     // outputs.
 
     // inputs holds one or more "channels" of samples. For example, a microphone
-    // that records "in sterio" would provide two channels. For this simple app,
+    // that records "in stereo" would provide two channels. For this simple app,
     // we use assume either "mono" input or the "left" channel if microphone is
-    // sterio.
-
-    // Handle occasional empty input channels sent to process() by the browser
-    // while audio is initializing.
-    if (!inputs.length) return;
+    // stereo.
 
     const inputChannels = inputs[0];
 

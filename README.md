@@ -1,3 +1,19 @@
+# Quick Start: Cloning, Building, and Running
+
+Assuming prerequisites are installed, the following steps should get the app running on your system:
+
+``` sh
+git clone git@github.com:peter-suggate/wasm-audio-app.git
+cd wasm-audio-app/wasm-audio/
+wasm-pack build --target web
+cd ..
+cp -R ./wasm-audio/pkg ./public/wasm-audio
+yarn
+yarn start
+```
+
+* * *
+
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
 ## Available Scripts
