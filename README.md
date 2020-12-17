@@ -1,3 +1,9 @@
+This code is published as part of the [corresponding blog article](https://www.toptal.com/webassembly/webassembly-rust-tutorial-web-audio) at the Toptal Engineering Blog.
+
+Visit https://www.toptal.com/blog and subscribe to our newsletter to read great articles!
+
+* * *
+
 # Quick Start: Cloning, Building, and Running
 
 Assuming prerequisites are installed, the following steps should get the app running on your system:
